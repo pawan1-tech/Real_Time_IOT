@@ -1,0 +1,75 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Models (keep structure, ignore weights)
+ml-service/models/*.pt
+ml-service/models/*.pth
+!ml-service/models/.gitkeep
+
+# Data
+*.csv
+*.npz
+*.npy
+data/
+
+# Frontend
+frontend/build/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Coverage
+coverage/
+*.cover
+.coverage
+.coverage.*
+
+# Testing
+.pytest_cache/
+.tox/
+
+# Misc
+*.bak
+*.tmp
+.cache/

@@ -1,0 +1,208 @@
+version: '3.8'
+
+services:
+  # MQTT Broker - Mosquitto
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: iot-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./config/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-logs:/mosquitto/log
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: iot-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: iot-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 32
+      KAFKA_COMPRESSION_TYPE: snappy
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # GridDB
+  griddb:
+    image: griddb/griddb:latest
+    container_name: iot-griddb
+    environment:
+      GRIDDB_CLUSTER_NAME: iotCluster
+      GRIDDB_PASSWORD: admin
+      NOTIFICATION_MEMBER: 1
+    ports:
+      - "10001:10001"
+      - "10010:10010"
+      - "10020:10020"
+      - "10031:10031"
+      - "10040:10040"
+      - "10050:10050"
+    volumes:
+      - griddb-data:/var/lib/gridstore
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # Sensor Simulator
+  sensor-simulator:
+    build:
+      context: ./sensor-simulator
+      dockerfile: Dockerfile
+    container_name: iot-sensor-simulator
+    depends_on:
+      - mosquitto
+    environment:
+      MQTT_BROKER: mosquitto
+      MQTT_PORT: 1883
+      NUM_DEVICES: 100
+      FAULT_PERCENTAGE: 30
+      PUBLISH_INTERVAL: 1
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # Data Processor (MQTT-Kafka Bridge + Processing)
+  data-processor:
+    build:
+      context: ./data-processor
+      dockerfile: Dockerfile
+    container_name: iot-data-processor
+    depends_on:
+      - mosquitto
+      - kafka
+      - griddb
+    environment:
+      MQTT_BROKER: mosquitto
+      MQTT_PORT: 1883
+      KAFKA_BROKER: kafka:9092
+      GRIDDB_HOST: griddb
+      GRIDDB_PORT: 10001
+      GRIDDB_CLUSTER: iotCluster
+      GRIDDB_USER: admin
+      GRIDDB_PASSWORD: admin
+      NODE_ENV: production
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # ML Service
+  ml-service:
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    container_name: iot-ml-service
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BROKER: kafka:9092
+      MODEL_PATH: /app/models
+      INFERENCE_BATCH_SIZE: 10
+      GPU_ENABLED: "false"
+    volumes:
+      - ./ml-service/models:/app/models
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # Alert Engine
+  alert-engine:
+    build:
+      context: ./alert-engine
+      dockerfile: Dockerfile
+    container_name: iot-alert-engine
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BROKER: kafka:9092
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      ALERT_COOLDOWN_HOURS: 1
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # Backend API
+  backend-api:
+    build:
+      context: ./backend-api
+      dockerfile: Dockerfile
+    container_name: iot-backend-api
+    depends_on:
+      - griddb
+      - kafka
+    environment:
+      GRIDDB_HOST: griddb
+      GRIDDB_PORT: 10001
+      GRIDDB_CLUSTER: iotCluster
+      GRIDDB_USER: admin
+      GRIDDB_PASSWORD: admin
+      KAFKA_BROKER: kafka:9092
+      PORT: 5000
+    ports:
+      - "5000:5000"
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # Frontend Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: iot-frontend
+    depends_on:
+      - backend-api
+    environment:
+      REACT_APP_API_URL: http://localhost:5000
+    ports:
+      - "3000:80"
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+volumes:
+  mosquitto-data:
+  mosquitto-logs:
+  kafka-data:
+  griddb-data:
+
+networks:
+  iot-network:
+    driver: bridge
