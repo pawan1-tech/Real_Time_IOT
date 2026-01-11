@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import MockDataGenerator from './services/MockDataGenerator';
+import './App.css';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -16,64 +18,67 @@ function App() {
     const [anomalies, setAnomalies] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [isDemoMode, setIsDemoMode] = useState(false);
 
-    // Fetch system statistics
-    const fetchStats = async () => {
-        try {
-            const response = await axios.get(`${API_URL}/api/v1/stats`);
-            if (response.data.success) {
-                setStats(response.data.stats);
+    // Initial check to see if backend is available
+    useEffect(() => {
+        const checkBackend = async () => {
+            try {
+                await axios.get(`${API_URL}/api/v1/stats`, { timeout: 2000 });
+                setIsDemoMode(false);
+            } catch (err) {
+                console.log("Backend not reachable, switching to Demo Mode");
+                setIsDemoMode(true);
             }
-        } catch (err) {
-            console.error('Error fetching stats:', err);
-        }
-    };
+        };
+        checkBackend();
+    }, []);
 
-    // Fetch latest metrics
-    const fetchMetrics = async () => {
-        try {
-            const response = await axios.get(`${API_URL}/api/v1/metrics/latest?limit=100`);
-            if (response.data.success) {
-                setMetrics(response.data.data);
-            }
-            setError(null);
-        } catch (err) {
-            setError('Failed to fetch metrics');
-            console.error('Error fetching metrics:', err);
-        } finally {
+    const fetchData = useCallback(async () => {
+        if (isDemoMode) {
+            // Use Mock Data
+            setStats(MockDataGenerator.getStats());
+            setMetrics(MockDataGenerator.getMetrics(100)); // 100 devices
+            setAnomalies(MockDataGenerator.getAnomalies());
             setLoading(false);
-        }
-    };
+            setError(null);
+        } else {
+            // Use Real API
+            try {
+                const [statsRes, metricsRes, anomaliesRes] = await Promise.all([
+                    axios.get(`${API_URL}/api/v1/stats`),
+                    axios.get(`${API_URL}/api/v1/metrics/latest?limit=100`),
+                    axios.get(`${API_URL}/api/v1/anomalies/latest?limit=50`)
+                ]);
 
-    // Fetch latest anomalies
-    const fetchAnomalies = async () => {
-        try {
-            const response = await axios.get(`${API_URL}/api/v1/anomalies/latest?limit=50`);
-            if (response.data.success) {
-                setAnomalies(response.data.data);
+                if (statsRes.data.success) setStats(statsRes.data.stats);
+                if (metricsRes.data.success) setMetrics(metricsRes.data.data);
+                if (anomaliesRes.data.success) setAnomalies(anomaliesRes.data.data);
+
+                setError(null);
+            } catch (err) {
+                console.error('API Error:', err);
+                // Optional: Auto-switch to demo mode on failure? 
+                // For now just show error or maybe prompt user
+                setError('Failed to fetch data from backend. Try switching to Demo Mode.');
+            } finally {
+                setLoading(false);
             }
-        } catch (err) {
-            console.error('Error fetching anomalies:', err);
         }
-    };
+    }, [isDemoMode]);
 
     // Initial fetch
     useEffect(() => {
-        fetchStats();
-        fetchMetrics();
-        fetchAnomalies();
-    }, []);
+        fetchData();
+    }, [fetchData]);
 
     // Auto-refresh every 5 seconds
     useEffect(() => {
         const interval = setInterval(() => {
-            fetchStats();
-            fetchMetrics();
-            fetchAnomalies();
+            fetchData();
         }, 5000);
-
         return () => clearInterval(interval);
-    }, []);
+    }, [fetchData]);
 
     // Format uptime
     const formatUptime = (seconds) => {
@@ -86,10 +91,10 @@ function App() {
     // Get status color
     const getStatusColor = (status) => {
         switch (status) {
-            case 'normal': return '#28a745';
-            case 'warning': return '#ffc107';
-            case 'anomaly': return '#dc3545';
-            default: return '#6c757d';
+            case 'normal': return '#10b981'; // Green
+            case 'warning': return '#f59e0b'; // Amber
+            case 'anomaly': return '#ef4444'; // Red
+            default: return '#64748b';
         }
     };
 
@@ -99,6 +104,15 @@ function App() {
                 <div className="header-content">
                     <h1>🏭 IoT Infrastructure Monitor</h1>
                     <p className="subtitle">Real-Time Monitoring & Anomaly Detection</p>
+                </div>
+                <div className="demo-controls">
+                    {isDemoMode && <span className="demo-badge">DEMO MODE ACTIVE</span>}
+                    <button
+                        className="btn-demo"
+                        onClick={() => setIsDemoMode(!isDemoMode)}
+                    >
+                        {isDemoMode ? 'Switch to Live API' : 'Switch to Demo Mode'}
+                    </button>
                 </div>
             </header>
 
@@ -110,6 +124,7 @@ function App() {
                         <div className="kpi-content">
                             <div className="kpi-value">{stats.active_sensors}</div>
                             <div className="kpi-label">Active Sensors</div>
+                            <div className="kpi-sublabel">Across {stats.total_devices} Devices</div>
                         </div>
                     </div>
 
@@ -127,6 +142,7 @@ function App() {
                         <div className="kpi-content">
                             <div className="kpi-value">{stats.anomalies_detected}</div>
                             <div className="kpi-label">Anomalies Detected</div>
+                            <div className="kpi-sublabel">Last 24 Hours</div>
                         </div>
                     </div>
 
@@ -135,6 +151,7 @@ function App() {
                         <div className="kpi-content">
                             <div className="kpi-value">{stats.total_devices}</div>
                             <div className="kpi-label">Total Devices</div>
+                            <div className="kpi-sublabel">Connected & Online</div>
                         </div>
                     </div>
                 </div>
@@ -145,14 +162,14 @@ function App() {
                         <h2>📊 Real-Time Metrics</h2>
                         <div className="refresh-indicator">
                             <span className="pulse"></span>
-                            Auto-refreshing every 5s
+                            Live Updates (5s)
                         </div>
                     </div>
 
                     {loading && <div className="loading">Loading metrics...</div>}
-                    {error && <div className="error">{error}</div>}
+                    {!loading && error && !isDemoMode && <div className="error">{error}</div>}
 
-                    {!loading && !error && (
+                    {!loading && (!error || isDemoMode) && (
                         <div className="table-container">
                             <table className="metrics-table">
                                 <thead>
@@ -167,9 +184,9 @@ function App() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {metrics.slice(0, 50).map((metric, index) => (
+                                    {metrics.map((metric, index) => (
                                         <tr key={index}>
-                                            <td className="device-id">{metric.device_id}</td>
+                                            <td><span className="device-id">{metric.device_id}</span></td>
                                             <td className="sector">{metric.sector}</td>
                                             <td className="sensor-type">{metric.sensor_type}</td>
                                             <td className="value">
@@ -189,7 +206,10 @@ function App() {
                                             <td>
                                                 <span
                                                     className="status-badge"
-                                                    style={{ backgroundColor: getStatusColor(metric.status) }}
+                                                    style={{
+                                                        backgroundColor: getStatusColor(metric.status),
+                                                        boxShadow: `0 0 10px ${getStatusColor(metric.status)}40`
+                                                    }}
                                                 >
                                                     {metric.status}
                                                 </span>
@@ -213,34 +233,34 @@ function App() {
                         </div>
 
                         <div className="anomalies-grid">
-                            {anomalies.slice(0, 6).map((anomaly, index) => (
+                            {anomalies.map((anomaly, index) => (
                                 <div key={index} className="anomaly-card">
                                     <div className="anomaly-header">
                                         <span className="anomaly-device">{anomaly.device_id}</span>
                                         <span className="anomaly-score">
-                                            {(anomaly.anomaly_score * 100).toFixed(0)}%
+                                            {(anomaly.anomaly_score * 100).toFixed(0)}% Score
                                         </span>
                                     </div>
                                     <div className="anomaly-details">
                                         <div className="anomaly-row">
-                                            <span className="label">Sector:</span>
+                                            <span className="label">Sector</span>
                                             <span className="value">{anomaly.sector}</span>
                                         </div>
                                         <div className="anomaly-row">
-                                            <span className="label">Sensor:</span>
+                                            <span className="label">Sensor</span>
                                             <span className="value">{anomaly.sensor_type}</span>
                                         </div>
                                         <div className="anomaly-row">
-                                            <span className="label">Value:</span>
+                                            <span className="label">Observed Value</span>
                                             <span className="value">{anomaly.current_value} {anomaly.unit}</span>
                                         </div>
                                         <div className="anomaly-row">
-                                            <span className="label">Confidence:</span>
+                                            <span className="label">Model Confidence</span>
                                             <span className="value">{(anomaly.confidence * 100).toFixed(0)}%</span>
                                         </div>
                                     </div>
                                     <div className="anomaly-time">
-                                        {new Date(anomaly.timestamp).toLocaleString()}
+                                        Detected at {new Date(anomaly.timestamp).toLocaleTimeString()}
                                     </div>
                                 </div>
                             ))}
